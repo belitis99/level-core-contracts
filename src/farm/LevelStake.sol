@@ -77,9 +77,14 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
      * @param _amount Amount to stake
      */
     function stake(address _to, uint256 _amount) external override {
-        update();
         require(_amount != 0, "INVALID_AMOUNT");
         UserInfo storage user = userInfo[_to];
+        uint256 cooldownStartTimestamp = user.cooldowns;
+        require(
+            block.timestamp > cooldownStartTimestamp + COOLDOWN_SECONDS + UNSTAKE_WINDOWN,
+            "COOLDOWN_ACTIVATED"
+        );
+        update();
 
         if (user.amount != 0) {
             uint256 pending = (user.amount * accRewardPerShare) / ACC_REWARD_PRECISION - user.rewardDebt;
@@ -147,6 +152,16 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
         user.cooldowns = block.timestamp;
 
         emit Cooldown(msg.sender);
+    }
+
+    /**
+     * @dev Deactivates the cooldown period
+     * - It can't be called if the user not on cooldown time
+     */
+    function deactivateCooldown() external override {
+        UserInfo storage user = userInfo[msg.sender];
+        user.cooldowns = 0;
+        emit CooldownDeactivated(msg.sender);
     }
 
     /**
@@ -241,14 +256,15 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
         require(LGO != IERC20(address(0)), "LGO not set");
         uint256 lgoBalance = LGO.balanceOf(address(this));
         if (_amount > lgoBalance) {
-            LGO.transfer(_to, lgoBalance);
+            LGO.safeTransfer(_to, lgoBalance);
         } else {
-            LGO.transfer(_to, _amount);
+            LGO.safeTransfer(_to, _amount);
         }
     }
 
     /* ========== EVENT ========== */
 
+    event CooldownDeactivated(address indexed user);
     event Staked(address indexed from, address indexed to, uint256 amount);
     event Unstaked(address indexed from, address indexed to, uint256 amount);
     event RewardsAccrued(address user, uint256 amount);

@@ -9,6 +9,8 @@ interface ILevelStake {
 
     function unstake(address _to, uint256 _amount) external;
 
+    function deactivateCooldown() external;
+
     function cooldown() external;
 
     function claimRewards(address _to) external;

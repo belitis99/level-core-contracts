@@ -3,8 +3,8 @@
 pragma solidity 0.8.15;
 
 import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
+import {Ownable} from "openzeppelin/access/Ownable.sol";
 import {SafeERC20} from "openzeppelin/token/ERC20/utils/SafeERC20.sol";
-import {OwnableUpgradeable} from "openzeppelin-upgradeable/access/OwnableUpgradeable.sol";
 import {Initializable} from "openzeppelin-upgradeable/proxy/utils/Initializable.sol";
 import {ILevelStake} from "../interfaces/ILevelStake.sol";
 
@@ -12,7 +12,7 @@ import {ILevelStake} from "../interfaces/ILevelStake.sol";
 /// @author Level
 /// @notice Hold team's LVL to stake to LevelStake contract. These LVL will be unlock in a period
 /// of 4 years with 25% annually released.
-contract LevelDevFund is Initializable, OwnableUpgradeable {
+contract LevelDevFund is Initializable, Ownable {
     using SafeERC20 for IERC20;
 
     IERC20 public LVL;
@@ -27,19 +27,14 @@ contract LevelDevFund is Initializable, OwnableUpgradeable {
     uint256 public claimedAmount;
 
     function initialize(address _levelStake) external initializer {
-        __Ownable_init();
         LEVEL_STAKE = ILevelStake(_levelStake);
         LVL = LEVEL_STAKE.LVL();
         LGO = LEVEL_STAKE.LGO();
     }
 
     /* ========== VIEW FUNCTIONS ========== */
-    /// @notice calculate amount of LVL unlocked
-    function unlockedLVL() public view returns (uint256) {
-        if (block.timestamp < START) {
-            // vesting not started, unlock all
-            return ALLOCATION;
-        }
+    /// @notice calculate amount of LVL can be claimed
+    function claimableLVL() public view returns (uint256) {
         uint256 _now = block.timestamp;
         // effective duration is rounded to a multiple of epoch
         uint256 effectiveDuration = _now <= START ? 0 : (_now - START) / EPOCH * EPOCH;
@@ -65,7 +60,7 @@ contract LevelDevFund is Initializable, OwnableUpgradeable {
     function withdraw(uint256 _amount, address _receiver) external onlyOwner {
         require(_receiver != address(0), "LevelDevFund::withdraw: invalid address");
         require(
-            _amount != 0 && _amount <= LVL.balanceOf(address(this)) && _amount <= unlockedLVL(),
+            _amount != 0 && _amount <= claimableLVL(),
             "LevelDevFund::withdraw: invalid amount"
         );
         claimedAmount += _amount;
@@ -74,29 +69,25 @@ contract LevelDevFund is Initializable, OwnableUpgradeable {
     }
 
     function stake(uint256 _amount) external onlyOwner {
-        require(_amount <= LVL.balanceOf(address(this)), "LevelDevFund::stake: insufficient balance");
         LVL.safeIncreaseAllowance(address(LEVEL_STAKE), _amount);
         LEVEL_STAKE.stake(address(this), _amount);
         emit Staked(_amount);
     }
 
     function unstake(uint256 _amount) external onlyOwner {
-        require(0 < _amount && _amount <= totalLVLStaked(), "LevelDevFund::unstake: invalid amount");
+        require(_amount > 0 , "LevelDevFund::unstake: invalid amount");
         LEVEL_STAKE.unstake(address(this), _amount);
         emit Unstaked(_amount);
     }
 
     function cooldown() external onlyOwner {
-        require(totalLVLStaked() != 0, "LevelDevFund::cooldown: not staked");
         LEVEL_STAKE.cooldown();
         emit Cooldown(msg.sender);
     }
 
     function claimLGO(address _receiver, uint256 _amount) external onlyOwner {
         require(_receiver != address(0), "LevelDevFund::claimLGO: invalid address");
-        if (LEVEL_STAKE.pendingReward(address(this)) != 0) {
-            LEVEL_STAKE.claimRewards(address(this));
-        }
+        LEVEL_STAKE.claimRewards(address(this));
         uint256 lgoBalance = LGO.balanceOf(address(this));
         _amount = _amount > lgoBalance ? lgoBalance : _amount;
         LGO.safeTransfer(_receiver, _amount);
