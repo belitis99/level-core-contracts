@@ -2,8 +2,6 @@
 
 pragma solidity 0.8.15;
 
-// import {SignedInt} from "../lib/SignedInt.sol";
-
 enum Side {
     LONG,
     SHORT
@@ -40,7 +38,8 @@ interface IPool {
         view
         returns (bool);
 
-    function swap(address _tokenIn, address _tokenOut, uint256 _minOut, address _to) external;
+    function swap(address _tokenIn, address _tokenOut, uint256 _minOut, address _to, bytes calldata _extradata)
+        external;
 
     function addLiquidity(address _tranche, address _token, uint256 _amountIn, uint256 _minLpAmount, address _to)
         external;

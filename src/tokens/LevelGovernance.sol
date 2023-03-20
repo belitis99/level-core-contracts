@@ -3,6 +3,7 @@
 pragma solidity 0.8.15;
 
 import {Initializable} from "openzeppelin-upgradeable/proxy/utils/Initializable.sol";
+import {ECDSA} from "openzeppelin/utils/cryptography/ECDSA.sol";
 import {GovernancePowerDelegationERC20} from "../lib/GovernancePowerDelegationERC20.sol";
 
 /**
@@ -34,9 +35,23 @@ contract LevelGovernance is Initializable, GovernancePowerDelegationERC20 {
 
     mapping(address => address) internal _propositionPowerDelegates;
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize() external initializer {
         __ERC20_init("Level Governance Token", "LGO");
         _mint(_msgSender(), MAX_SUPPLY);
+    }
+
+    function reinit_setDomainSeparator() external reinitializer(2) {
+        uint256 chainId;
+        assembly {
+            chainId := chainid()
+        }
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(EIP712_DOMAIN, keccak256(bytes(name())), keccak256(EIP712_REVISION), chainId, address(this))
+        );
     }
 
     /**
@@ -50,15 +65,9 @@ contract LevelGovernance is Initializable, GovernancePowerDelegationERC20 {
      * @param r signature param
      */
 
-    function permit(
-        address owner,
-        address spender,
-        uint256 value,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external {
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external
+    {
         require(owner != address(0), "INVALID_OWNER");
         //solium-disable-next-line
         require(block.timestamp <= deadline, "INVALID_EXPIRATION");
@@ -71,7 +80,7 @@ contract LevelGovernance is Initializable, GovernancePowerDelegationERC20 {
             )
         );
 
-        require(owner == ecrecover(digest, v, r, s), "INVALID_SIGNATURE");
+        require(owner == ECDSA.recover(digest, v, r, s), "INVALID_SIGNATURE");
         _nonces[owner] = currentValidNonce + 1;
         _approve(owner, spender, value);
     }
@@ -85,11 +94,7 @@ contract LevelGovernance is Initializable, GovernancePowerDelegationERC20 {
      * @param to the to address
      * @param amount the amount to transfer
      */
-    function _beforeTokenTransfer(
-        address from,
-        address to,
-        uint256 amount
-    ) internal override {
+    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
         address votingFromDelegatee = _getDelegatee(from, _votingDelegates);
         address votingToDelegatee = _getDelegatee(to, _votingDelegates);
 
@@ -137,9 +142,8 @@ contract LevelGovernance is Initializable, GovernancePowerDelegationERC20 {
         bytes32 r,
         bytes32 s
     ) public {
-        bytes32 structHash = keccak256(
-            abi.encode(DELEGATE_BY_TYPE_TYPEHASH, delegatee, uint256(delegationType), nonce, expiry)
-        );
+        bytes32 structHash =
+            keccak256(abi.encode(DELEGATE_BY_TYPE_TYPEHASH, delegatee, uint256(delegationType), nonce, expiry));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
         address signatory = ecrecover(digest, v, r, s);
         require(signatory != address(0), "INVALID_SIGNATURE");
@@ -157,14 +161,7 @@ contract LevelGovernance is Initializable, GovernancePowerDelegationERC20 {
      * @param r Half of the ECDSA signature pair
      * @param s Half of the ECDSA signature pair
      */
-    function delegateBySig(
-        address delegatee,
-        uint256 nonce,
-        uint256 expiry,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) public {
+    function delegateBySig(address delegatee, uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s) public {
         bytes32 structHash = keccak256(abi.encode(DELEGATE_TYPEHASH, delegatee, nonce, expiry));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
         address signatory = ecrecover(digest, v, r, s);

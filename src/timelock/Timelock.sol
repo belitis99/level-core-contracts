@@ -31,7 +31,7 @@ contract LevelTimelock {
     }
 
     function setDelay(uint256 _delay) public onlyTimelock {
-        if (_delay < MINIMUM_DELAY || delay > MAXIMUM_DELAY) {
+        if (_delay < MINIMUM_DELAY || _delay > MAXIMUM_DELAY) {
             revert ValueNotInRange(_delay, MINIMUM_DELAY, MAXIMUM_DELAY);
         }
         delay = _delay;
@@ -106,7 +106,7 @@ contract LevelTimelock {
         if (bytes(signature).length == 0) {
             callData = data;
         } else {
-            callData = abi.encodeWithSignature(signature, data);
+            callData = abi.encodePacked(bytes4(keccak256(bytes(signature))), data);
         }
 
         // Execute the call

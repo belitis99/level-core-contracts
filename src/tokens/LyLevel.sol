@@ -39,6 +39,10 @@ contract LyLevel is Initializable, OwnableUpgradeable, IERC20 {
 
     uint256 public totalUnclaimReward;
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize() external initializer {
         __Ownable_init();
     }

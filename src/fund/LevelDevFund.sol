@@ -59,10 +59,7 @@ contract LevelDevFund is Initializable, Ownable {
     /// @notice withdraw vested LVL
     function withdraw(uint256 _amount, address _receiver) external onlyOwner {
         require(_receiver != address(0), "LevelDevFund::withdraw: invalid address");
-        require(
-            _amount != 0 && _amount <= claimableLVL(),
-            "LevelDevFund::withdraw: invalid amount"
-        );
+        require(_amount != 0 && _amount <= claimableLVL(), "LevelDevFund::withdraw: invalid amount");
         claimedAmount += _amount;
         LVL.safeTransfer(_receiver, _amount);
         emit Withdrawn(_receiver, _amount);
@@ -75,7 +72,7 @@ contract LevelDevFund is Initializable, Ownable {
     }
 
     function unstake(uint256 _amount) external onlyOwner {
-        require(_amount > 0 , "LevelDevFund::unstake: invalid amount");
+        require(_amount > 0, "LevelDevFund::unstake: invalid amount");
         LEVEL_STAKE.unstake(address(this), _amount);
         emit Unstaked(_amount);
     }

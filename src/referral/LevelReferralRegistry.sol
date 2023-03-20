@@ -11,6 +11,10 @@ contract LevelReferralRegistry is Initializable, OwnableUpgradeable {
 
     address public controller;
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize() external initializer {
         __Ownable_init();
     }

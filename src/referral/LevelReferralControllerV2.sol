@@ -56,6 +56,10 @@ contract LevelReferralControllerV2 is Initializable, OwnableUpgradeable {
 
     bool public enableNextEpoch;
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(address _lvl, address _oracle, address _levelRegistry, uint256 _epochDuration)
         external
         initializer

@@ -6,6 +6,7 @@ import {ERC20} from "openzeppelin/token/ERC20/ERC20.sol";
 import {OwnableUpgradeable} from "openzeppelin-upgradeable/access/OwnableUpgradeable.sol";
 import {Initializable} from "openzeppelin-upgradeable/proxy/utils/Initializable.sol";
 import {ILevelStake} from "../interfaces/ILevelStake.sol";
+import {IBurnableERC20} from "../interfaces/IBurnableERC20.sol";
 
 /**
  * @title LevelStake
@@ -14,6 +15,9 @@ import {ILevelStake} from "../interfaces/ILevelStake.sol";
  */
 contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
     using SafeERC20 for IERC20;
+    using SafeERC20 for IBurnableERC20;
+
+    uint8 constant VERSION = 3;
 
     struct UserInfo {
         uint256 amount;
@@ -23,11 +27,16 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
 
     uint256 private constant ACC_REWARD_PRECISION = 1e12;
     uint256 private constant MAX_REWARD_PER_SECOND = 1 ether;
+    uint256 private constant MAX_BOOSTED_REWARD_PER_SECOND = 1 ether;
 
-    uint256 public constant COOLDOWN_SECONDS = 10 days;
-    uint256 public constant UNSTAKE_WINDOWN = 2 days;
+    //== UNUSED: keep for frontend
+    uint256 public constant COOLDOWN_SECONDS = 0;
+    uint256 public constant UNSTAKE_WINDOWN = 0;
+    //===============================
 
-    IERC20 public LVL;
+    uint256 public constant STAKING_TAX_PRECISION = 1000;
+
+    IBurnableERC20 public LVL;
     IERC20 public LGO;
 
     uint256 public rewardPerSecond;
@@ -36,18 +45,38 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
 
     mapping(address => UserInfo) public userInfo;
 
+    address public booster;
+    uint256 public boostedRewardPerSecond;
+    uint256 public boostedRewardEndTime;
+
+    address public auctionTreasury;
+
+    uint256 public stakingTax;
+
+    constructor() {
+        _disableInitializers();
+    }
+
     /**
      * @dev Called by the proxy contract
-     *
      */
     function initialize(address _lvl, address _lgo, uint256 _rewardPerSecond) external initializer {
         __Ownable_init();
         require(_rewardPerSecond <= MAX_REWARD_PER_SECOND, "> MAX_REWARD_PER_SECOND");
         require(_lvl != address(0), "Invalid LVL address");
-        require(_lgo != address(0), "Invalid LVL address");
-        LVL = IERC20(_lvl);
+        require(_lgo != address(0), "Invalid LGO address");
+        LVL = IBurnableERC20(_lvl);
         LGO = IERC20(_lgo);
         rewardPerSecond = _rewardPerSecond;
+    }
+
+    function reinit_addAuctionTreasury(address _auctionTreasury) external reinitializer(VERSION) {
+        require(_auctionTreasury != address(0), "invalid auction treasury");
+        auctionTreasury = _auctionTreasury;
+    }
+
+    function reinit_setNewTax() external reinitializer(VERSION) {
+        stakingTax = 4;
     }
 
     /* ========== VIEW FUNCTIONS ========== */
@@ -64,7 +93,8 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
         if (block.timestamp > lastRewardTime && lvlSupply != 0) {
             uint256 time = block.timestamp - lastRewardTime;
             uint256 reward = time * rewardPerSecond;
-            _accRewardPerShare += ((reward * ACC_REWARD_PRECISION) / lvlSupply);
+            uint256 boostedReward = getBoostedReward();
+            _accRewardPerShare += (((reward + boostedReward) * ACC_REWARD_PRECISION) / lvlSupply);
         }
         return ((user.amount * _accRewardPerShare) / ACC_REWARD_PRECISION) - user.rewardDebt;
     }
@@ -79,11 +109,6 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
     function stake(address _to, uint256 _amount) external override {
         require(_amount != 0, "INVALID_AMOUNT");
         UserInfo storage user = userInfo[_to];
-        uint256 cooldownStartTimestamp = user.cooldowns;
-        require(
-            block.timestamp > cooldownStartTimestamp + COOLDOWN_SECONDS + UNSTAKE_WINDOWN,
-            "COOLDOWN_ACTIVATED"
-        );
         update();
 
         if (user.amount != 0) {
@@ -94,11 +119,14 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
             }
         }
 
-        user.cooldowns = getNextCooldownTimestamp(_amount, _to, user.amount);
-        user.amount += _amount;
+        uint256 _taxAmount = _amount * stakingTax / STAKING_TAX_PRECISION;
+        uint256 _stakedAmount = _amount - _taxAmount;
+
+        user.amount += _stakedAmount;
         user.rewardDebt = (user.amount * accRewardPerShare) / ACC_REWARD_PRECISION;
 
         LVL.safeTransferFrom(msg.sender, address(this), _amount);
+        LVL.burn(_taxAmount);
 
         emit Staked(msg.sender, _to, _amount);
     }
@@ -113,20 +141,8 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
         require(_amount != 0, "INVALID_AMOUNT");
         UserInfo storage user = userInfo[msg.sender];
 
-        uint256 cooldownStartTimestamp = user.cooldowns;
-
-        require(block.timestamp > cooldownStartTimestamp + COOLDOWN_SECONDS, "INSUFFICIENT_COOLDOWN");
-        require(
-            block.timestamp - (cooldownStartTimestamp + COOLDOWN_SECONDS) <= UNSTAKE_WINDOWN, "UNSTAKE_WINDOW_FINISHED"
-        );
-
         uint256 amountToUnstake = (_amount > user.amount) ? user.amount : _amount;
-
         uint256 pending = ((user.amount * accRewardPerShare) / ACC_REWARD_PRECISION) - user.rewardDebt;
-
-        if (user.amount - amountToUnstake == 0) {
-            user.cooldowns = 0;
-        }
 
         user.amount -= amountToUnstake;
         user.rewardDebt = (user.amount * accRewardPerShare) / ACC_REWARD_PRECISION;
@@ -146,12 +162,7 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
      * - It can't be called if the user is not staking
      */
     function cooldown() external override {
-        UserInfo storage user = userInfo[msg.sender];
-
-        require(user.amount != 0, "INVALID_BALANCE_ON_COOLDOWN");
-        user.cooldowns = block.timestamp;
-
-        emit Cooldown(msg.sender);
+        // doing nothing
     }
 
     /**
@@ -159,9 +170,7 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
      * - It can't be called if the user not on cooldown time
      */
     function deactivateCooldown() external override {
-        UserInfo storage user = userInfo[msg.sender];
-        user.cooldowns = 0;
-        emit CooldownDeactivated(msg.sender);
+        // doing nothing
     }
 
     /**
@@ -183,53 +192,17 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
         }
     }
 
-    /**
-     * @dev Calculates the how is gonna be a new cooldown timestamp depending on the sender/receiver situation
-     * - If the timestamp of the sender is "better" or the timestamp of the recipient is 0, we take the one of the recipient
-     * - Weighted average of from/to cooldown timestamps if:
-     * # The sender doesn't have the cooldown activated (timestamp 0).
-     * # The sender timestamp is expired
-     * # The sender has a "worse" timestamp
-     * - If the receiver's cooldown timestamp expired (too old), the next is 0
-     * @param _amountToReceive Amount
-     * @param _to Address of the recipient
-     * @param _toBalance Current balance of the receiver
-     * @return The new cooldown timestamp
-     *
-     */
-    function getNextCooldownTimestamp(uint256 _amountToReceive, address _to, uint256 _toBalance)
-        public
-        view
-        returns (uint256)
-    {
-        UserInfo storage user = userInfo[_to];
-
-        uint256 toCooldownTimestamp = user.cooldowns;
-
-        if (toCooldownTimestamp == 0) {
-            return 0;
-        }
-
-        uint256 minimalValidCooldownTimestamp = block.timestamp - COOLDOWN_SECONDS - UNSTAKE_WINDOWN;
-
-        if (minimalValidCooldownTimestamp > toCooldownTimestamp) {
-            toCooldownTimestamp = 0;
-        } else {
-            uint256 fromCooldownTimestamp = block.timestamp;
-
-            if (fromCooldownTimestamp < toCooldownTimestamp) {
-                return toCooldownTimestamp;
-            } else {
-                toCooldownTimestamp = (_amountToReceive * fromCooldownTimestamp + (_toBalance * toCooldownTimestamp))
-                    / (_amountToReceive + _toBalance);
-            }
-        }
-        return toCooldownTimestamp;
-    }
-
     /* ========== RESTRICTIVE FUNCTIONS ========== */
 
-    /// @notice Sets the reward per second to be distributed. Can only be called by the owner.
+    /// @notice Sets boosted reward manager. Can only be called by the owner.
+    /// @param _booster Address of booster.
+    function setBooster(address _booster) public onlyOwner {
+        require(_booster != address(0), "INVALID_ADDRESS");
+        booster = _booster;
+        emit BoosterSet(_booster);
+    }
+
+    /// @notice Sets the reward per second to be distributed. Only be called by the owner.
     /// @param _rewardPerSecond The amount of LGO to be distributed per second.
     function setRewardPerSecond(uint256 _rewardPerSecond) public onlyOwner {
         require(_rewardPerSecond <= MAX_REWARD_PER_SECOND, "> MAX_REWARD_PER_SECOND");
@@ -238,14 +211,42 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
         emit RewardPerSecondUpdated(_rewardPerSecond);
     }
 
+    /// @notice Sets the boosted reward to be distributed. Can only be called by the booster.
+    /// @param _boostedRewardPerSecond The boosted amount of LGO to be distributed per second.
+    /// @param _duration  Distribute duration of boosted reward.
+    function setBoostedReward(uint256 _boostedRewardPerSecond, uint256 _duration) public {
+        require(msg.sender == booster, "CALLER_IS_NOT_BOOSTER");
+        require(_boostedRewardPerSecond <= MAX_BOOSTED_REWARD_PER_SECOND, "> MAX_BOOSTED_REWARD_PER_SECOND");
+        require(_duration > 0, "INVALID_DURATION");
+        update();
+        boostedRewardPerSecond = _boostedRewardPerSecond;
+        boostedRewardEndTime = block.timestamp + _duration;
+
+        emit BoostedRewardUpdated(boostedRewardPerSecond, block.timestamp, boostedRewardEndTime);
+    }
+
+    /// @notice Reserve an amount of LGO by sending it to auction treasury
+    /// see https://app.level.finance/dao/proposals/0xc6e4b5b4b808192171846434574be85887a25b22776c7ececa3c355f5c753f7e
+    function reserveAuctionFund(uint256 amount) external onlyOwner {
+        LGO.safeTransfer(auctionTreasury, amount);
+        emit AuctionFundReserved(amount);
+    }
+
     /* ========== INTERNAL FUNCTIONS ========== */
-    function update() internal {
+    function getBoostedReward() internal view returns (uint256) {
+        uint256 boostedTime = block.timestamp <= boostedRewardEndTime ? block.timestamp : boostedRewardEndTime;
+        uint256 duration = boostedTime > lastRewardTime ? boostedTime - lastRewardTime : 0;
+        return duration * boostedRewardPerSecond;
+    }
+
+    function update() public {
         if (block.timestamp > lastRewardTime) {
             uint256 lvlSupply = LVL.balanceOf(address(this));
             if (lvlSupply != 0) {
                 uint256 time = block.timestamp - lastRewardTime;
                 uint256 reward = time * rewardPerSecond;
-                accRewardPerShare = accRewardPerShare + ((reward * ACC_REWARD_PRECISION) / lvlSupply);
+                uint256 boostedReward = getBoostedReward();
+                accRewardPerShare = accRewardPerShare + (((reward + boostedReward) * ACC_REWARD_PRECISION) / lvlSupply);
             }
             lastRewardTime = block.timestamp;
         }
@@ -264,11 +265,11 @@ contract LevelStake is Initializable, OwnableUpgradeable, ILevelStake {
 
     /* ========== EVENT ========== */
 
-    event CooldownDeactivated(address indexed user);
     event Staked(address indexed from, address indexed to, uint256 amount);
     event Unstaked(address indexed from, address indexed to, uint256 amount);
-    event RewardsAccrued(address user, uint256 amount);
     event RewardsClaimed(address indexed from, address indexed to, uint256 amount);
-    event Cooldown(address indexed user);
+    event BoosterSet(address booster);
     event RewardPerSecondUpdated(uint256 rewardPerSecond);
+    event BoostedRewardUpdated(uint256 boostedRewardPerSecond, uint256 startTime, uint256 endTime);
+    event AuctionFundReserved(uint256 amount);
 }

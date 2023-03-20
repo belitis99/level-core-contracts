@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: MIT
+
 pragma solidity >=0.8.0;
 
 import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
+import {IBurnableERC20} from "./IBurnableERC20.sol";
 
 interface ILevelStake {
     function userInfo(address _user) external view returns (uint256, uint256, uint256);
@@ -17,7 +20,7 @@ interface ILevelStake {
 
     function pendingReward(address _to) external view returns (uint256);
 
-    function LVL() external view returns (IERC20);
+    function LVL() external view returns (IBurnableERC20);
 
     function LGO() external view returns (IERC20);
 
