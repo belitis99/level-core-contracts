@@ -2,21 +2,8 @@
 
 pragma solidity 0.8.15;
 
-interface IERC20 {
-
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address to, uint256 amount) external returns (bool);
-    function allowance(address owner, address spender) external view returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) external returns (bool);
-}
+import {SafeERC20} from "openzeppelin/token/ERC20/utils/SafeERC20.sol";
+import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
 
 interface ILevelStake {
     function userInfo(address _user) external view returns (uint256, uint256, uint256);
@@ -36,6 +23,7 @@ interface ILevelStake {
 /// @author Level
 /// @notice Hold investor LVL to stake to LevelStake contract. These LVL will be unlocked after a certain period
 contract LevelDaoVesting {
+    using SafeERC20 for IERC20;
 
     IERC20 public LVL;
     IERC20 public LGO;
@@ -97,7 +85,7 @@ contract LevelDaoVesting {
             "LevelDaoVesting::withdraw: invalid amount"
         );
         claimedAmount += _amount;
-        LVL.transfer(investor, _amount);
+        LVL.safeTransfer(investor, _amount);
         emit Withdrawn(investor, _amount);
     }
 
@@ -118,26 +106,26 @@ contract LevelDaoVesting {
 
     function claimLGO(uint256 _amount) external onlyInvestor {
         LEVEL_STAKE.claimRewards(address(this));
-        LGO.transfer(investor, _amount);
+        LGO.safeTransfer(investor, _amount);
         emit LGOClaimed(investor, _amount);
     }
 
     function claimAllLGO() external onlyInvestor {
         LEVEL_STAKE.claimRewards(address(this));
         uint256 _amount = LGO.balanceOf(address(this));
-        LGO.transfer(investor, _amount);
+        LGO.safeTransfer(investor, _amount);
         emit LGOClaimed(investor, _amount);
     }
 
     function stakeForInvestor(uint256 _amount) external onlyOwner {
-        LVL.transferFrom(msg.sender, address(this), _amount);
+        LVL.safeTransferFrom(msg.sender, address(this), _amount);
         _stake(_amount);
     }
 
     function emergencyWithdraw() external onlyOwner {
         uint256 _amount = LVL.balanceOf(address(this));
         claimedAmount += _amount;
-        LVL.transfer(investor, _amount);
+        LVL.safeTransfer(investor, _amount);
         emit Withdrawn(investor, _amount);
     }
 
