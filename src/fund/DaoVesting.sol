@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
 
 pragma solidity 0.8.15;
 
@@ -29,12 +29,12 @@ contract LevelDaoVesting {
     IERC20 public LGO;
     ILevelStake public LEVEL_STAKE;
 
-    uint256 public constant EPOCH = 365 days;
-    uint256 public constant DURATION = 1 * EPOCH;
-    uint256 public constant START = 1673654400; // Jan 14, 2023 1:00:00 PM GMT+00:00
-    uint256 public constant ALLOCATION = 1_000_000 ether; // 1 M
+    uint256 public locked_duration;
+    uint256 public vesting_duration;
+    uint256 public start;
 
-    uint256 public claimedAmount;
+    uint256 public lvl_amount;
+    uint256 public claimed_amount;
     address public investor;
     address public owner;
 
@@ -48,41 +48,72 @@ contract LevelDaoVesting {
         _;
     }
 
-    constructor(address _levelStake, address _investor) {
+    constructor(
+        address _levelStake,
+        address _investor,
+        uint256 _start,
+        uint256 _locked_duration,
+        uint256 _vesting_duration) {
         LEVEL_STAKE = ILevelStake(_levelStake);
-        investor = _investor;
         LVL = LEVEL_STAKE.LVL();
         LGO = LEVEL_STAKE.LGO();
+        investor = _investor;
+        start = _start;
+        locked_duration = _locked_duration;
+        vesting_duration = _vesting_duration;
+        owner = msg.sender;
+    }
+
+    function get_vesting_speed() public view returns (uint256) {
+        if (vesting_duration == 0) {
+            return 0;
+        }
+        return lvl_amount / vesting_duration; // number of LVL per second
+    }
+
+    function get_vesting_end() public view returns (uint256) {
+        return start + locked_duration + vesting_duration;
+    }
+
+    function get_vested_duration() public view returns (uint256) {
+        uint256 _now = block.timestamp;
+        if (_now <= start + locked_duration) {
+            return 0;
+        } else if (_now >= get_vesting_end()) {
+            return vesting_duration;
+        } else {
+            return _now - start - locked_duration;
+        }
     }
 
     /* ========== VIEW FUNCTIONS ========== */
+
     /// @notice calculate amount of LVL can be claimed
-    function claimableLVL() public view returns (uint256) {
-        uint256 _now = block.timestamp;
-        // effective duration is rounded to a multiple of epoch
-        uint256 effectiveDuration = _now <= START ? 0 : (_now - START) / EPOCH * EPOCH;
-        effectiveDuration = effectiveDuration > DURATION ? DURATION : effectiveDuration;
-        return effectiveDuration * ALLOCATION / DURATION - claimedAmount;
+    function claimable_LVL() public view returns (uint256) {
+        uint256 _vested_duration = get_vested_duration();
+        uint256 _vesting_speed = get_vesting_speed();
+        uint256 _vested_amount = _vesting_speed * _vested_duration;
+        return _vested_amount - claimed_amount;
     }
 
-    function claimableLGO() public view returns (uint256) {
+    function claimable_LGO() public view returns (uint256) {
         return LEVEL_STAKE.pendingReward(address(this)) + LGO.balanceOf(address(this));
     }
 
-    function getUnstakeTime() public view returns (uint256 start, uint256 end) {
+    function getUnstakeTime() public view returns (uint256 _start, uint256 _end) {
         (,, uint256 cooldowns) = LEVEL_STAKE.userInfo(address(this));
         if (cooldowns != 0) {
-            start = cooldowns + LEVEL_STAKE.COOLDOWN_SECONDS();
-            end = cooldowns + LEVEL_STAKE.COOLDOWN_SECONDS() + LEVEL_STAKE.UNSTAKE_WINDOWN();
+            _start = cooldowns + LEVEL_STAKE.COOLDOWN_SECONDS();
+            _end = cooldowns + LEVEL_STAKE.COOLDOWN_SECONDS() + LEVEL_STAKE.UNSTAKE_WINDOWN();
         }
     }
 
     /* ========== PUBLIC FUNCTIONS ========== */
 
-    function withdraw(uint256 _amount) external onlyInvestor {
+    function claim_LVL(uint256 _amount) external onlyInvestor {
         require(
-            (_amount != 0 && _amount <= claimableLVL()),
-            "LevelDaoVesting::withdraw: invalid amount"
+            (_amount != 0 && _amount <= claimable_LVL()),
+            "LevelDaoVesting::claim_LVL: invalid amount"
         );
         claimedAmount += _amount;
         LVL.safeTransfer(investor, _amount);
@@ -104,13 +135,13 @@ contract LevelDaoVesting {
         emit Cooldown(msg.sender);
     }
 
-    function claimLGO(uint256 _amount) external onlyInvestor {
+    function claim_LGO(uint256 _amount) external onlyInvestor {
         LEVEL_STAKE.claimRewards(address(this));
         LGO.safeTransfer(investor, _amount);
         emit LGOClaimed(investor, _amount);
     }
 
-    function claimAllLGO() external onlyInvestor {
+    function claim_all_LGO() external onlyInvestor {
         LEVEL_STAKE.claimRewards(address(this));
         uint256 _amount = LGO.balanceOf(address(this));
         LGO.safeTransfer(investor, _amount);
@@ -120,21 +151,17 @@ contract LevelDaoVesting {
     function stakeForInvestor(uint256 _amount) external onlyOwner {
         LVL.safeTransferFrom(msg.sender, address(this), _amount);
         _stake(_amount);
+        emit StakedForInvestor(_amount);
     }
 
-    function emergencyWithdraw() external onlyOwner {
+    function emergency_withdraw() external onlyOwner {
         uint256 _amount = LVL.balanceOf(address(this));
         claimedAmount += _amount;
         LVL.safeTransfer(investor, _amount);
         emit Withdrawn(investor, _amount);
     }
 
-    function transferInvestor(address _investor) external onlyOwner {
-        require(_investor != address(0), "Invalid address");
-        investor = _investor;
-    }
-
-    function transferOwnership(address _newOwner) external onlyOwner {
+    function transfer_ownership(address _newOwner) external onlyOwner {
         require(_newOwner != address(0), "Invalid address");
         owner = _newOwner;
     }
@@ -150,6 +177,7 @@ contract LevelDaoVesting {
 
     /* ========== EVENTS ========== */
 
+    event StakedForInvestor(uint256 _amount);
     event Staked(uint256 _amount);
     event Unstaked(uint256 _amount);
     event Cooldown(address indexed _user);

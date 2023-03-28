@@ -3,12 +3,11 @@
 pragma solidity 0.8.15;
 
 import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
-import {Initializable} from "openzeppelin-upgradeable/proxy/utils/Initializable.sol";
 import {FixedPoint} from "../lib/FixedPoint.sol";
 import {PairOracleTWAP, PairOracle} from "../lib/PairOracleTWAP.sol";
 import {IUniswapV2Pair} from "../interfaces/IUniswapV2Pair.sol";
 
-contract LVLOracle is Initializable {
+contract LVLOracle {
     using PairOracleTWAP for PairOracle;
 
     uint256 private constant PRECISION = 1e6;
@@ -19,10 +18,7 @@ contract LVLOracle is Initializable {
     PairOracle public lvlEthPair;
     PairOracle public ethBusdPair;
 
-    function initialize(address _lvl, address _weth, address _lvlEthPair, address _ethBusdPair, address _updater)
-        external
-        initializer
-    {
+    constructor(address _lvl, address _weth, address _lvlEthPair, address _ethBusdPair, address _updater) {
         require(_lvl != address(0), "LVLOracle::initialize: invalid address");
         require(_weth != address(0), "LVLOracle::initialize: invalid address");
         require(_lvlEthPair != address(0), "LVLOracle::initialize: invalid address");

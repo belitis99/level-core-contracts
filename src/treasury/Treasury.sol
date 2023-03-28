@@ -43,6 +43,10 @@ contract Treasury is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         _;
     }
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(address _pool) external initializer {
         __AccessControl_init();
         __ReentrancyGuard_init();

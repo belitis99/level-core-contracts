@@ -69,8 +69,7 @@ contract LevelReferralTest is Test {
         Proxy controllerProxy = new Proxy(address(new TestLevelReferralController()), address(proxyAdmin), new bytes(0));
         levelReferralController = TestLevelReferralController(address(controllerProxy));
 
-        oracle = new LVLOracle();
-        oracle.initialize(
+        oracle = new LVLOracle(
             address(LVL), address(WBNB), address(lvlBnbPair), address(bnbBusdPair), address(levelReferralController)
         );
 

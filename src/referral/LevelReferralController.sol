@@ -54,6 +54,10 @@ contract LevelReferralController is Initializable, OwnableUpgradeable {
     ILevelStake public levelStake;
     bool public enableStaking;
 
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         address _lvl,
         address _oracle,

@@ -7,6 +7,8 @@ import "./mocks/MockPool.sol";
 import "./mocks/MockLpToken.sol";
 import {WETH9} from "./mocks/WETH.sol";
 import {ETHUnwrapper} from "./mocks/ETHUnwrapper.sol";
+import {ProxyAdmin} from "openzeppelin/proxy/transparent/ProxyAdmin.sol";
+import {TransparentUpgradeableProxy as Proxy} from "openzeppelin/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract TreasuryTest is Test {
     address admin = 0x9Cb2f2c0122a1A8C90f667D1a55E5B45AC8b6086;
@@ -38,7 +40,14 @@ contract TreasuryTest is Test {
 
         ethUnwrapper = new ETHUnwrapper(address(WETH));
 
-        treasury = new Treasury();
+        ProxyAdmin proxyAdmin = new ProxyAdmin();
+        Proxy treasuryProxy = new Proxy(
+            address(new Treasury()),
+            address(proxyAdmin),
+            new bytes(0)
+        );
+
+        treasury = Treasury(address(treasuryProxy));
         treasury.initialize(address(pool));
         treasury.reinit_v3(address(WETH), address(ethUnwrapper), address(LLP));
 

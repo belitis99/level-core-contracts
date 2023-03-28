@@ -3,66 +3,84 @@
 pragma solidity 0.8.15;
 
 import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
+import {SafeERC20} from "openzeppelin/token/ERC20/utils/SafeERC20.sol";
 import {Initializable} from "openzeppelin-upgradeable/proxy/utils/Initializable.sol";
+import {ILevelStake} from "../interfaces/ILevelStake.sol";
 import {OwnableUpgradeable} from "openzeppelin-upgradeable/access/OwnableUpgradeable.sol";
 
 contract LyLevel is Initializable, OwnableUpgradeable, IERC20 {
-    struct RedeemProgramInfo {
+    using SafeERC20 for IERC20;
+
+    struct BatchInfo {
         uint256 rewardPerShare;
         uint256 totalBalance;
         uint256 allocatedTime;
     }
 
-    string public constant name = "Level loyalty token";
-
+    string public constant name = "Level Loyalty Token";
     string public constant symbol = "lyLVL";
-
     uint256 public constant decimals = 18;
-
     uint256 public constant PRECISION = 1e6;
-
     address public minter;
-
     IERC20 public rewardToken;
-
     uint256 public currentBatchId;
 
-    mapping(uint256 => RedeemProgramInfo) public redeemPrograms;
+    //== UNUSED: keep for upgradable storage reserve
+    address public distributor;
+    uint256 public nextBatchAmount;
+    uint256 public nextBatchTimestamp;
+    //===============================
 
-    mapping(uint256 => mapping(address => uint256)) public userBalance;
+    mapping(uint256 => BatchInfo) public batches;
+    mapping(uint256 => mapping(address => uint256)) public _balances;
+    mapping(address => mapping(address => uint256)) public _allowances;
+    mapping(uint256 => mapping(address => uint256)) public _rewards;
+    mapping(uint256 => uint256) private _totalSupply;
 
-    mapping(address => mapping(address => uint256)) private _allowances;
+    uint256 public lastEpochTimestamp;
+    uint256 public epochDuration = 1 days;
+    uint256 public epochReward = 20_000 ether;
+    uint256 public constant MIN_EPOCH_DURATION = 1 days;
+    uint256 public constant MAX_EPOCH_REWARD = 100_000 ether;
 
-    mapping(uint256 => mapping(address => uint256)) public userClaimed;
+    ILevelStake public levelStake;
+    bool public enableStaking;
+    uint256 public batchVestingDuration;
 
-    mapping(uint256 => uint256) private totalSupply_;
-
-    uint256 public totalUnclaimReward;
+    uint256 public constant MAX_BATCH_VESTING_DURATION = 7 days;
+    mapping(uint256 => uint256) public batchVestingDurations;
 
     constructor() {
         _disableInitializers();
     }
 
-    function initialize() external initializer {
+    function initialize(address _rewardToken) external initializer {
+        require(_rewardToken != address(0), "Invalid reward token");
         __Ownable_init();
+        rewardToken = IERC20(_rewardToken);
     }
 
-    /* ========== VIEW FUNCTIONS ========== */
+    /// @notice v2: use preconfigured epoch duration and allocation
+    function upgrade_useEpoch(uint256 _lastEpochTimestamp) external reinitializer(2) {
+        lastEpochTimestamp = _lastEpochTimestamp;
+    }
+
+    /// @notice v3: enable reward claim & stake
+    function upgrade_useLevelStake(address _levelStake, bool _enableStaking) external reinitializer(3) {
+        require(_levelStake != address(0), "Invalid staking contract");
+        levelStake = ILevelStake(_levelStake);
+        enableStaking = _enableStaking;
+    }
+
+    /* ========== ERC-20 FUNCTIONS ========== */
+
     function totalSupply() public view override returns (uint256) {
-        return totalSupply_[currentBatchId];
+        return _totalSupply[currentBatchId];
     }
 
     function balanceOf(address _account) public view override returns (uint256) {
-        return userBalance[currentBatchId][_account];
+        return _balances[currentBatchId][_account];
     }
-
-    function claimable(uint256 _batchId, address _account) public view returns (uint256) {
-        require(_batchId <= currentBatchId, "LyLevel: program not exist");
-        return userBalance[_batchId][_account] * redeemPrograms[_batchId].rewardPerShare / PRECISION
-            - userClaimed[_batchId][_account];
-    }
-
-    /* ========== MUTATIVE FUNCTIONS ========== */
 
     function transfer(address _to, uint256 _amount) public virtual override returns (bool) {
         address owner = _msgSender();
@@ -118,29 +136,17 @@ contract LyLevel is Initializable, OwnableUpgradeable, IERC20 {
         _burn(account, amount);
     }
 
-    function claim(uint256 _batchId, address _receiver) external {
-        require(rewardToken != IERC20(address(0)), "LyLevel: reward token not set");
-        address sender = _msgSender();
-        uint256 amount = claimable(_batchId, sender);
-        require(amount != 0, "LyLevel: nothing to claim");
-        userClaimed[_batchId][sender] += amount;
-        totalUnclaimReward -= amount;
-        _safeTransferReward(_receiver, amount);
-        emit Claimed(sender, _batchId, amount, _receiver);
-    }
-
-    /* ========== INTERNAL FUNCTIONS ========== */
     function _transfer(address _from, address _to, uint256 _amount) internal {
         require(_from != address(0), "ERC20: transfer from the zero address");
         require(_to != address(0), "ERC20: transfer to the zero address");
 
-        uint256 fromBalance = userBalance[currentBatchId][_from];
+        uint256 fromBalance = _balances[currentBatchId][_from];
         require(fromBalance >= _amount, "ERC20: transfer amount exceeds balance");
         unchecked {
-            userBalance[currentBatchId][_from] = fromBalance - _amount;
+            _balances[currentBatchId][_from] = fromBalance - _amount;
             // Overflow not possible: the sum of all balances is capped by totalSupply, and the sum is preserved by
             // decrementing then incrementing.
-            userBalance[currentBatchId][_to] += _amount;
+            _balances[currentBatchId][_to] += _amount;
         }
 
         emit Transfer(_from, _to, _amount);
@@ -149,10 +155,10 @@ contract LyLevel is Initializable, OwnableUpgradeable, IERC20 {
     function _mint(address _account, uint256 _amount) internal {
         require(_account != address(0), "ERC20: mint to the zero address");
 
-        totalSupply_[currentBatchId] += _amount;
+        _totalSupply[currentBatchId] += _amount;
         unchecked {
             // Overflow not possible: balance + _amount is at most totalSupply + _amount, which is checked above.
-            userBalance[currentBatchId][_account] += _amount;
+            _balances[currentBatchId][_account] += _amount;
         }
         emit Transfer(address(0), _account, _amount);
     }
@@ -160,12 +166,12 @@ contract LyLevel is Initializable, OwnableUpgradeable, IERC20 {
     function _burn(address _account, uint256 _amount) internal {
         require(_account != address(0), "ERC20: burn from the zero address");
 
-        uint256 accountBalance = userBalance[currentBatchId][_account];
+        uint256 accountBalance = _balances[currentBatchId][_account];
         require(accountBalance >= _amount, "ERC20: burn _amount exceeds balance");
         unchecked {
-            userBalance[currentBatchId][_account] = accountBalance - _amount;
+            _balances[currentBatchId][_account] = accountBalance - _amount;
             // Overflow not possible: _amount <= accountBalance <= totalSupply.
-            totalSupply_[currentBatchId] -= _amount;
+            _totalSupply[currentBatchId] -= _amount;
         }
 
         emit Transfer(_account, address(0), _amount);
@@ -189,21 +195,55 @@ contract LyLevel is Initializable, OwnableUpgradeable, IERC20 {
         }
     }
 
-    // Safe reward transfer function, just in case if rounding error causes pool to not have enough reward.
-    function _safeTransferReward(address _to, uint256 _amount) internal {
-        uint256 rewardBalance = rewardToken.balanceOf(address(this));
-        if (_amount > rewardBalance) {
-            rewardToken.transfer(_to, rewardBalance);
+    /* ========== LOYALTY REWARDING FUNCTIONS ========== */
+
+    function getNextBatch()
+        public
+        view
+        returns (uint256 _nextEpochTimestamp, uint256 _nextEpochReward, uint256 _vestingDuration)
+    {
+        _nextEpochTimestamp = lastEpochTimestamp + epochDuration;
+        _nextEpochReward = epochReward;
+        _vestingDuration = batchVestingDuration;
+    }
+
+    function claimable(uint256 _batchId, address _account) public view returns (uint256) {
+        if (_batchId > currentBatchId) {
+            return 0;
         } else {
-            rewardToken.transfer(_to, _amount);
+            uint256 reward = _balances[_batchId][_account] * batches[_batchId].rewardPerShare / PRECISION;
+            uint256 vestingDuration = batchVestingDurations[_batchId];
+            if (vestingDuration != 0) {
+                BatchInfo memory batch = batches[_batchId];
+                uint256 duration = block.timestamp >= (batch.allocatedTime + vestingDuration)
+                    ? vestingDuration
+                    : (block.timestamp - batch.allocatedTime);
+                reward = reward * duration / vestingDuration;
+            }
+            return reward > _rewards[_batchId][_account] ? reward - _rewards[_batchId][_account] : 0;
         }
     }
 
+    function claimRewards(uint256 _batchId, address _receiver) external {
+        address sender = _msgSender();
+        uint256 amount = claimable(_batchId, sender);
+        require(amount > 0, "LyLevel: nothing to claim");
+        _rewards[_batchId][sender] += amount;
+        if (enableStaking) {
+            rewardToken.safeIncreaseAllowance(address(levelStake), amount);
+            levelStake.stake(_receiver, amount);
+        } else {
+            rewardToken.safeTransfer(_receiver, amount);
+        }
+        emit Claimed(sender, _batchId, amount, _receiver);
+    }
+
     /* ========== RESTRICTIVE FUNCTIONS ========== */
-    function setRewardToken(address _rewardToken) external onlyOwner {
-        require(rewardToken == IERC20(address(0)), "LyLevel: reward token already set");
-        rewardToken = IERC20(_rewardToken);
-        emit RewardTokenSet(_rewardToken);
+
+    function setBatchVestingDuration(uint256 _duration) external onlyOwner {
+        require(_duration <= MAX_BATCH_VESTING_DURATION, "Must <= MAX_BATCH_VESTING_DURATION");
+        batchVestingDuration = _duration;
+        emit BatchVestingDurationSet(_duration);
     }
 
     function setMinter(address _minter) external onlyOwner {
@@ -212,30 +252,44 @@ contract LyLevel is Initializable, OwnableUpgradeable, IERC20 {
         emit MinterSet(_minter);
     }
 
-    /// @notice allocate reward for current batch and start a new batch
-    function allocateReward(uint256 _totalAmount) external onlyOwner {
-        require(rewardToken != IERC20(address(0)), "LyLevel: reward token not set");
-        require(totalSupply() > 0, "LyLevel: no supply");
-        require(
-            totalUnclaimReward + _totalAmount <= rewardToken.balanceOf(address(this)),
-            "LyLevel: insufficient reward balance"
-        );
-        RedeemProgramInfo memory info = RedeemProgramInfo({
+    function setEpoch(uint256 _epochDuration, uint256 _epochReward) public onlyOwner {
+        require(_epochDuration >= MIN_EPOCH_DURATION, "Must >= MIN_EPOCH_DURATION");
+        require(_epochReward <= MAX_EPOCH_REWARD, "Must <= MAX_EPOCH_REWARD");
+        epochDuration = _epochDuration;
+        epochReward = _epochReward;
+        emit EpochSet(epochDuration, epochReward);
+    }
+
+    function enableRewardStaking(bool _enabled) external onlyOwner {
+        if (enableStaking != _enabled) {
+            enableStaking = _enabled;
+        }
+        emit StakingEnabled(_enabled);
+    }
+
+    function allocate() external {
+        (uint256 _epochTimestamp, uint256 _rewardAmount, uint256 _vestingDuration) = getNextBatch();
+        require(block.timestamp >= _epochTimestamp, "now < trigger_time");
+        BatchInfo memory newBatch = BatchInfo({
             totalBalance: totalSupply(),
-            rewardPerShare: _totalAmount * PRECISION / totalSupply(),
+            rewardPerShare: _rewardAmount * PRECISION / totalSupply(),
             allocatedTime: block.timestamp
         });
-        totalUnclaimReward += _totalAmount;
-        redeemPrograms[currentBatchId] = info;
-        emit RewardAllocated(currentBatchId, _totalAmount);
+        batches[currentBatchId] = newBatch;
+        batchVestingDurations[currentBatchId] = _vestingDuration;
+        emit RewardAllocated(currentBatchId, _rewardAmount);
+
         currentBatchId++;
+        lastEpochTimestamp = _epochTimestamp;
         emit BatchStarted(currentBatchId);
     }
 
     /* ========== EVENT ========== */
     event MinterSet(address minter);
+    event EpochSet(uint256 epochDuration, uint256 epochReward);
     event Claimed(address indexed user, uint256 indexed batchId, uint256 amount, address to);
     event RewardAllocated(uint256 indexed batchId, uint256 amount);
     event BatchStarted(uint256 id);
-    event RewardTokenSet(address token);
+    event StakingEnabled(bool enabled);
+    event BatchVestingDurationSet(uint256 duration);
 }

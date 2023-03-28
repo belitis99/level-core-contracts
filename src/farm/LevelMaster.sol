@@ -72,11 +72,11 @@ contract LevelMaster is Ownable, ReentrancyGuard {
     event LogSetPool(uint256 indexed pid, uint256 allocPoint, IRewarder indexed rewarder, bool overwrite);
     event LogUpdatePool(uint256 indexed pid, uint64 lastRewardTime, uint256 lpSupply, uint256 accRewardPerShare);
     event LogRewardPerSecond(uint256 rewardPerSecond);
-    event LogSetRewardToken(address token);
 
-    constructor(address _levelPool, address _weth) {
+    constructor(address _levelPool, address _weth, address _rewardToken) {
         levelPool = IPool(_levelPool);
         weth = IWETH(_weth);
+        rewardToken = IERC20(_rewardToken);
     }
 
     /// @notice Returns the number of MCV2 pools.
@@ -353,12 +353,6 @@ contract LevelMaster is Ownable, ReentrancyGuard {
         emit Withdraw(msg.sender, pid, amount, to);
     }
 
-    function setRewardToken(address _rewardToken) external onlyOwner {
-        require(rewardToken == IERC20(address(0)), "LevelMaster:: reward token already set");
-        rewardToken = IERC20(_rewardToken);
-        emit LogSetRewardToken(_rewardToken);
-    }
-
     function _safeTransferETH(address to, uint256 amount) internal {
         // solhint-disable-next-line avoid-low-level-calls
         (bool success,) = to.call{value: amount}(new bytes(0));
@@ -367,13 +361,8 @@ contract LevelMaster is Ownable, ReentrancyGuard {
 
     // Safe reward transfer function, just in case if rounding error causes pool to not have enough reward.
     function _safeTransferReward(address _to, uint256 _amount) internal {
-        require(rewardToken != IERC20(address(0)), "LevelMaster::_safeTransferReward: reward not set");
-        uint256 rewardBalance = rewardToken.balanceOf(address(this));
-        if (_amount > rewardBalance) {
-            rewardToken.transfer(_to, rewardBalance);
-        } else {
-            rewardToken.transfer(_to, _amount);
-        }
+        require(_amount < rewardToken.balanceOf(address(this)), "LevelMaster::_safeTransferReward: Reward token balance is insufficient");
+        rewardToken.safeTransfer(_to, _amount);
     }
 
     receive() external payable {}
