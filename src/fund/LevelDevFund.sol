@@ -12,7 +12,7 @@ import {ILevelStake} from "../interfaces/ILevelStake.sol";
 /// @author Level
 /// @notice Hold team's LVL to stake to LevelStake contract. These LVL will be unlock in a period
 /// of 4 years with 25% annually released.
-contract LevelDevFund is Initializable, Ownable {
+contract LevelDevFund is Ownable {
     using SafeERC20 for IERC20;
 
     IERC20 public LVL;
@@ -26,7 +26,7 @@ contract LevelDevFund is Initializable, Ownable {
 
     uint256 public claimedAmount;
 
-    function initialize(address _levelStake) external initializer {
+    constructor(address _levelStake) {
         LEVEL_STAKE = ILevelStake(_levelStake);
         LVL = LEVEL_STAKE.LVL();
         LGO = LEVEL_STAKE.LGO();
