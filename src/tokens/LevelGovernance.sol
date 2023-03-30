@@ -12,7 +12,7 @@ import {GovernancePowerDelegationERC20} from "../lib/GovernancePowerDelegationER
  * Inspired from AAVE v2
  */
 contract LevelGovernance is Initializable, GovernancePowerDelegationERC20 {
-    uint256 public constant MAX_SUPPLY = 30_000_000 ether;
+    uint256 public constant MAX_SUPPLY = 1_000 ether;
 
     /// @dev owner => next valid nonce to submit with permit()
     mapping(address => uint256) public _nonces;
