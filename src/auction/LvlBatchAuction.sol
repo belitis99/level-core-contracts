@@ -16,7 +16,7 @@ contract LvlBatchAuction is BatchAuction {
         uint64 _startTime,
         uint64 _endTime,
         uint128 _minimumSellingPrice,
-        uint128 _sellingPrice,
+        uint128 _ceilingPrice,
         uint128 _minimumPrice,
         address _admin,
         address _treasury,
@@ -29,7 +29,7 @@ contract LvlBatchAuction is BatchAuction {
             _startTime,
             _endTime,
             _minimumSellingPrice,
-            _sellingPrice,
+            _ceilingPrice,
             _minimumPrice,
             _admin,
             _treasury
