@@ -45,21 +45,8 @@ contract LevelDevFundTest is Test {
 
         levelStake.initialize(address(level), address(lgo), REWARD_PER_SECONDS);
 
-        devFund = new LevelDevFund();
-        devFund.initialize(address(levelStake));
+        devFund = new LevelDevFund(address(levelStake));
         lgo.transfer(address(levelStake), 1_000 ether);
-
-        vm.stopPrank();
-    }
-
-    function test_initialize() external {
-        vm.startPrank(owner);
-
-        LevelDevFund _devFund = new LevelDevFund();
-        _devFund.initialize(address(levelStake));
-
-        assertEq(address(_devFund.LVL()), address(level));
-        assertEq(address(_devFund.LGO()), address(lgo));
 
         vm.stopPrank();
     }
