@@ -112,13 +112,6 @@ contract GovernanceRedemptionPoolV2Test is Test {
 
         vm.startPrank(alice);
         uint256 slpInTreasury = SLP.balanceOf(address(treasury));
-        console.log("slpInTreasury", slpInTreasury);
-        console.log("isRedemptionActive", governanceRedemptionPool.isRedemptionActive());
-        (uint256 startTimestamp, uint256 endTimestamp, uint256 lgoSupply, uint256 llpBalance, uint256 lvlUsdtLPBalance)
-        = governanceRedemptionPool.snapshotV2();
-
-        console.log("lgoSupply", lgoSupply);
-        console.log("llpBalance", llpBalance);
 
         vm.expectRevert("GovernanceRedemptionPool::redeem: !redeemable");
         governanceRedemptionPool.redeem(alice, 5 ether);
