@@ -12,6 +12,7 @@ import {GovernancePowerDelegationERC20} from "../lib/GovernancePowerDelegationER
  * Inspired from AAVE v2
  */
 contract LevelGovernance is Initializable, GovernancePowerDelegationERC20 {
+    uint8 constant VERSION = 2;
     uint256 public constant MAX_SUPPLY = 1_000 ether;
 
     /// @dev owner => next valid nonce to submit with permit()
@@ -44,7 +45,7 @@ contract LevelGovernance is Initializable, GovernancePowerDelegationERC20 {
         _mint(_msgSender(), MAX_SUPPLY);
     }
 
-    function reinit_setDomainSeparator() external reinitializer(2) {
+    function reinit_setDomainSeparator() external reinitializer(VERSION) {
         uint256 chainId;
         assembly {
             chainId := chainid()
